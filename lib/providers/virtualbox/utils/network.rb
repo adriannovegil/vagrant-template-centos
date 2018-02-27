@@ -1,5 +1,5 @@
-# encoding: ascii-8bit
-# Template Project to generate Vagrant instances easy.
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
 
 require 'resolv'
 
@@ -16,7 +16,6 @@ module Template
           # +server_config+::
           #
           def self.configureNetwork(machine_instance, server_config)
-            # Iterate over the network configuration
             if server_config.has_key?("network")
               network_config = server_config["network"]
               # Configure interfaces
@@ -35,10 +34,21 @@ module Template
                   end
                 end
               end
+              # Workaround for Centos 7
+              # service network restart
+              # service NetworkManager restart
+              machine_instance.vm.provision "shell",
+                inline: "service network restart",
+                run: "always"
+              machine_instance.vm.provision "shell",
+                inline: "service NetworkManager restart",
+                run: "always"
               # Configure the gateway
               if network_config.has_key?("gw-ip")
                 configureGateway(machine_instance, network_config)
               end
+              # Set Ip Forward to True
+              setIpForwardTrue(machine_instance)
             end
           end
 
@@ -52,25 +62,25 @@ module Template
           def self.configureGateway(machine_instance, network_config)
             # Get the gateway ip
             gwip = network_config["gw-ip"]
-            # Compose command
-            command = ["route", "add"]
+            # Remove all the default route gw
+            machine_instance.vm.provision "shell",
+              inline: "ip route flush 0/0",
+              run: "always"
+            # Compose ip route command
+            command = ["ip"]
             case gwip
             when Resolv::IPv6::Regex
-              command += ["-A", "inet6"]
+              command += ["-6"]
             end
-            command += ["default", "gw", gwip]
+            command += ["route", "add", "default", "via", gwip]
             # Get and set the gw interface
             if network_config.has_key?("gw-if")
-              command << network_config["gw-if"]
+              command += ["dev", network_config["gw-if"]]
             end
             # Execute command
             machine_instance.vm.provision "shell",
-              run: "always",
-              inline: command.join(" ")
-            # Delete default gw on eth0
-            machine_instance.vm.provision "shell",
-              run: "always",
-              inline: "eval `route -n | awk '{ if ($8 ==\"eth0\" && $2 != \"0.0.0.0\") print \"route del default gw \" $2; }'`"
+              inline: command.join(" "),
+              run: "always"
           end
 
           #
@@ -84,6 +94,9 @@ module Template
           def self.configureInterface(type, machine_instance, interface)
             # Parameters map
             parameters = {}
+            if interface.has_key?("bridge-adapter")
+              parameters[:bridge] = interface['bridge-adapter']
+            end
             if interface.has_key?("if-inet-type")
               if interface["if-inet-type"] == "dhcp"
                 parameters[:type] = interface['if-inet-type']
@@ -97,19 +110,25 @@ module Template
               if interface.has_key?("if-netmask")
                 parameters[:netmask] = interface['if-netmask']
               end
-              if interface.has_key?("if-adapter")
-                parameters[:bridge] = interface['bridge-adapter']
-              end
             else
               parameters[:type] = "dhcp"
             end
             # Configure interface
-            # Workaround for Centos 7
-            # service network restart
-            # service NetworkManager restart
             machine_instance.vm.network type, parameters
           end
 
+          #
+          # Set Ip Forward to True
+          # Params:
+          # +machine_instance+::
+          #
+          private
+          def self.setIpForwardTrue(machine_instance)
+            # Configure ip forward in the system
+            machine_instance.vm.provision "shell",
+              inline: "sysctl -w net.ipv4.ip_forward=1",
+              run: "always"
+          end
         end
       end
     end

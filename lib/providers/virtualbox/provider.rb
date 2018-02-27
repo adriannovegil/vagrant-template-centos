@@ -1,5 +1,5 @@
-# encoding: ascii-8bit
-# Template Project to generate Vagrant instances easy.
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
 
 require_relative "utils/network.rb"
 
@@ -28,16 +28,15 @@ module Template
               machine_instance.ssh.insert_key = false
               machine_instance.vm.provision "file", source: server_config["ssh-pub-key"], destination: "~/.ssh/authorized_keys"
               machine_instance.ssh.private_key_path = [server_config["ssh-prv-key"], "~/.vagrant.d/insecure_private_key"]
-              machine_instance.vm.provision "shell", inline: <<-EOC
-          sudo sed -i -e "\\#PasswordAuthentication yes# s#PasswordAuthentication yes#PasswordAuthentication no#g" /etc/ssh/sshd_config
-          sudo service ssh restart
-        EOC
             end
 
             # Configure the instance group
             if server_config["group"]
               vb.customize ["modifyvm", :id, "--groups", "/" + server_config["group"]]
             end
+
+            # Activate Nat Host Resolver
+            vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
 
             # http://stackoverflow.com/questions/19490652/how-to-sync-time-on-host-wake-up-within-virtualbox
             vb.customize [ "guestproperty", "set", :id, "/VirtualBox/GuestAdd/VBoxService/--timesync-set-threshold", 10000 ]
@@ -48,8 +47,6 @@ module Template
           machine_instance.vm.hostname = server_config['guest-hostname']
 
           # Network configuration
-          #machine_instance.vm.network "private_network", ip: server_config['guest-ip']
-          #configureNetwork(machine_instance, server_config)
           Template::Providers::Virtualbox::Utils::NetworkManager.configureNetwork(machine_instance, server_config)
 
           # custom hostname aliases
@@ -59,10 +56,11 @@ module Template
 
           # Set box type based on configuration. Defaults to `precise64` (Ubuntu).
           if !server_config["box"]
-            machine_instance.vm.box = "ubuntu/trusty64"
+            machine_instance.vm.box = "bento/centos-7.2"
           else
             machine_instance.vm.box = server_config["box"]
           end
+
           # Set the box URL
           # The URL that you see below is from Vagrant's own list of available boxes:
           # http://www.vagrantbox.es/
@@ -72,25 +70,15 @@ module Template
 
           # Provisioning the server
           if server_config.has_key?("scripts")
-            # [Workaround]
-            # default: stdin: is not a tty
-            # If you're using Vagrant with Ubuntu and getting this annoying (but not
-            # impactful) error during provisioning, Just paste this into your Vagrantfile
-            # as the first provisioner:
-            machine_instance.vm.provision "fix-no-tty", type: "shell" do |s|
-              s.privileged = false
-              s.inline = "sudo sed -i '/tty/!s/mesg n/tty -s \\&\\& mesg n/' /root/.profile"
-            end
-
             # Execute the provisioning servers
             server_config["scripts"].each do |script, key|
-              #serverScript = "./provisioning/" + script + " 2&>1 >> /vagrant/provision.log"
               serverScript = "./provisioning/" + script
-              machine_instance.vm.provision "shell", path: serverScript
+              machine_instance.vm.provision "shell",
+                path: serverScript,
+                privileged: false
             end
           end
         end
-        
       end
     end
   end
